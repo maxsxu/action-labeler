@@ -207,7 +207,7 @@ func main() {
 
 	enableLabelMissingSlug := os.Getenv("ENABLE_LABEL_MISSING")
 	enableLabelMissing := true
-	if len(enableLabelMissingSlug) == 0 || enableLabelMissingSlug == "false" {
+	if enableLabelMissingSlug == "false" {
 		enableLabelMissing = false
 	}
 
