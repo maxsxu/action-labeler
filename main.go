@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"os"
-	"reflect"
 	"regexp"
 	"strings"
 
@@ -71,7 +70,7 @@ func getIssueLabels(client *github.Client, owner, repo string, number int) ([]*g
 	return issueLabels, nil
 }
 
-func run(token, owner, repo string, number int, labels map[string]bool) {
+func run(token, owner, repo string, number int, labels map[string]bool, enableMissing bool, labelMissing string) {
 	ctx := context.Background()
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},
@@ -81,18 +80,20 @@ func run(token, owner, repo string, number int, labels map[string]bool) {
 	client := github.NewClient(tc)
 
 	// Get repo labels
+	log.Println("@List repo labels")
 	repoLabels, err := getRepoLabels(client, owner, repo)
 	if err != nil {
 		log.Fatalln("List repo labels: ", err)
 	}
-	log.Printf("Repo labels: %v\n", repoLabels)
 
-	// Get expected labels
-	// Only handle labels already exist in repo
 	repoLabelsMap := make(map[string]struct{})
 	for _, label := range repoLabels {
 		repoLabelsMap[label.GetName()] = struct{}{}
 	}
+	log.Printf("Repo labels: %v\n", repoLabelsMap)
+
+	// Get expected labels
+	// Only handle labels already exist in repo
 	for label := range labels {
 		if _, exist := repoLabelsMap[label]; !exist {
 			log.Printf("Found label %v not exist int repo\n", label)
@@ -102,16 +103,17 @@ func run(token, owner, repo string, number int, labels map[string]bool) {
 	log.Printf("Expected labels: %v\n", labels)
 
 	// Get current labels on this PR
+	log.Println("@List current labels")
 	currentLabels, err := getIssueLabels(client, owner, repo, number)
 	if err != nil {
 		log.Fatalln("List current issue labels: ", err)
 	}
-	log.Printf("Current labels: %v\n", currentLabels)
 
 	currentLabelsMap := make(map[string]struct{})
 	for _, label := range currentLabels {
 		currentLabelsMap[label.GetName()] = struct{}{}
 	}
+	log.Printf("Current labels: %v\n", currentLabelsMap)
 
 	// Remove labels
 	log.Println("@Remove labels")
@@ -121,6 +123,18 @@ func run(token, owner, repo string, number int, labels map[string]bool) {
 		if checked, exist := labels[label.GetName()]; exist && !checked {
 			labelsToRemove = append(labelsToRemove, label.GetName())
 		}
+	}
+
+	// Remove missing labels
+	uncheckedCount := 0
+	for _, checked := range labels {
+		if !checked {
+			uncheckedCount++
+		}
+	}
+
+	if _, exist := currentLabelsMap[labelMissing]; exist && uncheckedCount < len(labels) {
+		labelsToRemove = append(labelsToRemove, labelMissing)
 	}
 
 	log.Printf("Labels to remove: %v\n", labelsToRemove)
@@ -147,14 +161,22 @@ func run(token, owner, repo string, number int, labels map[string]bool) {
 
 	if len(labelsToAdd) == 0 {
 		log.Println("No labels to add.")
-		return
+	} else {
+		log.Printf("Labels to add: %v\n", labelsToAdd)
+
+		_, _, err = client.Issues.AddLabelsToIssue(ctx, owner, repo, number, labelsToAdd)
+		if err != nil {
+			log.Printf("Add labels %v: %v\n", labelsToAdd, err)
+		}
 	}
 
-	log.Printf("Labels to add: %v\n", labelsToAdd)
-
-	_, _, err = client.Issues.AddLabelsToIssue(ctx, owner, repo, number, labelsToAdd)
-	if err != nil {
-		log.Printf("Add labels %v: %v\n", labelsToAdd, err)
+	// Add missing label
+	if enableMissing && uncheckedCount == len(labels) {
+		log.Println("@Add missing label")
+		_, _, err = client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{labelMissing})
+		if err != nil {
+			log.Printf("Add missing label %v: %v\n", labelMissing, err)
+		}
 	}
 }
 
@@ -181,6 +203,17 @@ func main() {
 	labelWatchMap := make(map[string]struct{})
 	for _, l := range labelWatchList {
 		labelWatchMap[l] = struct{}{}
+	}
+
+	enableLabelMissingSlug := os.Getenv("ENABLE_LABEL_MISSING")
+	enableLabelMissing := true
+	if len(enableLabelMissingSlug) == 0 || enableLabelMissingSlug == "false" {
+		enableLabelMissing = false
+	}
+
+	labelMissing := os.Getenv("LABEL_MISSING")
+	if len(labelMissing) == 0 {
+		labelMissing = "label-missing"
 	}
 
 	log.Printf("owner=%v,repo=%v\n", owner, repo)
@@ -217,7 +250,6 @@ func main() {
 		}
 
 		log.Printf("pullRequest[\"number\"]: %#v\n", pullRequest["number"])
-		log.Printf("TypeOf PR number: %s\n", reflect.TypeOf(pullRequest["number"]))
 		prNumber := int(pullRequest["number"].(float64))
 
 		//log.Println("PR Body: ", prBody)
@@ -232,6 +264,6 @@ func main() {
 			return
 		}
 
-		run(token, owner, repo, prNumber, labels)
+		run(token, owner, repo, prNumber, labels, enableLabelMissing, labelMissing)
 	}
 }
