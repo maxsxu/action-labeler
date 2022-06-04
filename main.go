@@ -70,7 +70,7 @@ func getIssueLabels(client *github.Client, owner, repo string, number int) ([]*g
 	return issueLabels, nil
 }
 
-func run(token, owner, repo string, number int, labels map[string]bool, enableMissing bool, labelMissing string) {
+func run(token, owner, repo string, number int, labels map[string]bool, labelWatchMap map[string]struct{}, enableMissing bool, labelMissing string) {
 	ctx := context.Background()
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},
@@ -119,21 +119,29 @@ func run(token, owner, repo string, number int, labels map[string]bool, enableMi
 	log.Println("@Remove labels")
 
 	labelsToRemove := []string{}
-	for _, label := range currentLabels {
-		if checked, exist := labels[label.GetName()]; exist && !checked {
-			labelsToRemove = append(labelsToRemove, label.GetName())
+	if len(labels) == 0 { // Remove current labels when PR body is empty
+		for l := range labelWatchMap {
+			if _, exist := currentLabelsMap[l]; exist {
+				labelsToRemove = append(labelsToRemove, l)
+			}
+		}
+	} else {
+		for _, label := range currentLabels {
+			if checked, exist := labels[label.GetName()]; exist && !checked {
+				labelsToRemove = append(labelsToRemove, label.GetName())
+			}
 		}
 	}
 
 	// Remove missing labels
-	uncheckedCount := 0
+	checkedCount := 0
 	for _, checked := range labels {
-		if !checked {
-			uncheckedCount++
+		if checked {
+			checkedCount++
 		}
 	}
 
-	if _, exist := currentLabelsMap[labelMissing]; exist && uncheckedCount < len(labels) {
+	if _, exist := currentLabelsMap[labelMissing]; exist && checkedCount > 0 {
 		labelsToRemove = append(labelsToRemove, labelMissing)
 	}
 
@@ -171,7 +179,7 @@ func run(token, owner, repo string, number int, labels map[string]bool, enableMi
 	}
 
 	// Add missing label
-	if enableMissing && uncheckedCount == len(labels) {
+	if enableMissing && checkedCount == 0 {
 		log.Println("@Add missing label")
 		_, _, err = client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{labelMissing})
 		if err != nil {
@@ -182,8 +190,6 @@ func run(token, owner, repo string, number int, labels map[string]bool, enableMi
 
 func main() {
 	log.Println("@Start docbot")
-
-	log.Println(os.Environ())
 
 	ownerRepoSlug := os.Getenv("GITHUB_REPOSITORY")
 	ownerRepo := strings.Split(ownerRepoSlug, "/")
@@ -262,11 +268,6 @@ func main() {
 		labels := extractLabels(prBody, labelPattern, labelWatchMap)
 		log.Printf("labels: %#v\n", labels)
 
-		if len(labels) == 0 {
-			log.Println("No labels to handle.")
-			return
-		}
-
-		run(token, owner, repo, prNumber, labels, enableLabelMissing, labelMissing)
+		run(token, owner, repo, prNumber, labels, labelWatchMap, enableLabelMissing, labelMissing)
 	}
 }
