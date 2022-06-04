@@ -195,6 +195,9 @@ func main() {
 	token := os.Getenv("GITHUB_TOKEN")
 
 	labelPattern := os.Getenv("LABEL_PATTERN")
+	if len(labelPattern) == 0 {
+		labelPattern = "- \\[(.*?)\\] ?`(.+?)`"
+	}
 
 	labelWatchListSlug := os.Getenv("LABEL_WATCH_LIST")
 	log.Printf("labelWatchListSlug: %v\n", labelWatchListSlug)
