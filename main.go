@@ -151,7 +151,7 @@ func run(token, owner, repo string, number int, labels map[string]bool, labelWat
 	if !enableLabelMultiple && checkedCount > 1 {
 		log.Println("Multiple labels detected")
 		_, _, err = client.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{
-			Body: func(v string) *string { return &v }(fmt.Sprintf("@%s Please select only one label.", pr.User.Login))})
+			Body: func(v string) *string { return &v }(fmt.Sprintf("@%s Please select only one label.", pr.User.GetLogin()))})
 		if err != nil {
 			log.Printf("Create issue comment: %v\n", err)
 			return
