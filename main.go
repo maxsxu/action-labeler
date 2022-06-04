@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"regexp"
@@ -79,6 +80,12 @@ func run(token, owner, repo string, number int, labels map[string]bool, labelWat
 	tc := oauth2.NewClient(ctx, ts)
 	client := github.NewClient(tc)
 
+	pr, _, err := client.PullRequests.Get(ctx, owner, repo, number)
+	if err != nil {
+		log.Printf("Get PR: %v\n", err)
+		return
+	}
+
 	// Get repo labels
 	log.Println("@List repo labels")
 	repoLabels, err := getRepoLabels(client, owner, repo)
@@ -144,7 +151,7 @@ func run(token, owner, repo string, number int, labels map[string]bool, labelWat
 	if !enableLabelMultiple && checkedCount > 1 {
 		log.Println("Multiple labels detected")
 		_, _, err = client.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{
-			Body: func(v string) *string { return &v }("Please select only one label.")})
+			Body: func(v string) *string { return &v }(fmt.Sprintf("@%s Please select only one label.", pr.User.Login))})
 		if err != nil {
 			log.Printf("Create issue comment: %v\n", err)
 			return
