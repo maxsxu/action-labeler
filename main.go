@@ -70,7 +70,7 @@ func getIssueLabels(client *github.Client, owner, repo string, number int) ([]*g
 	return issueLabels, nil
 }
 
-func run(token, owner, repo string, number int, labels map[string]bool, labelWatchMap map[string]struct{}, enableMissing bool, labelMissing string) {
+func run(token, owner, repo string, number int, labels map[string]bool, labelWatchMap map[string]struct{}, enableMissing bool, labelMissing string, enableLabelMultiple bool) {
 	ctx := context.Background()
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},
@@ -139,6 +139,17 @@ func run(token, owner, repo string, number int, labels map[string]bool, labelWat
 		if checked {
 			checkedCount++
 		}
+	}
+
+	if !enableLabelMultiple && checkedCount > 1 {
+		log.Println("Multiple labels detected")
+		_, _, err = client.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{
+			Body: func(v string) *string { return &v }("Please select only one label.")})
+		if err != nil {
+			log.Printf("Create issue comment: %v\n", err)
+			return
+		}
+		return
 	}
 
 	if _, exist := currentLabelsMap[labelMissing]; exist && checkedCount > 0 {
@@ -225,6 +236,12 @@ func main() {
 		labelMissing = "label-missing"
 	}
 
+	enableLabelMultipleSlug := os.Getenv("ENABLE_LABEL_MULTIPLE")
+	enableLabelMultiple := false
+	if enableLabelMultipleSlug == "true" {
+		enableLabelMultiple = true
+	}
+
 	log.Printf("owner=%v,repo=%v\n", owner, repo)
 	log.Println("token=", token)
 	log.Println("labelPattern=", labelPattern)
@@ -268,6 +285,6 @@ func main() {
 		labels := extractLabels(prBody, labelPattern, labelWatchMap)
 		log.Printf("labels: %#v\n", labels)
 
-		run(token, owner, repo, prNumber, labels, labelWatchMap, enableLabelMissing, labelMissing)
+		run(token, owner, repo, prNumber, labels, labelWatchMap, enableLabelMissing, labelMissing, enableLabelMultiple)
 	}
 }
