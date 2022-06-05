@@ -37,6 +37,17 @@ jobs:
         uses: maxsxu/action-labeler@master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LABEL_PATTERN: '- \[(.*?)\] ?`(.+?)`' # matches '- [x] `label`'
           LABEL_WATCH_LIST: 'doc,doc-required,doc-not-needed,doc-complete,doc-label-missing'
+          LABEL_MISSING: 'doc-label-missing'
 ```
+
+## Configurations
+
+| Name                    | Description                            | Default                   |
+| ----------------------- |----------------------------------------| ------------------------- |
+| `GITHUB_TOKEN`          | The GitHub Token                       | &nbsp;                   |
+| `LABEL_PATTERN`         | RegExp to extract labels               | `'- \[(.*?)\] ?`(.+?)`' ` |
+| `LABEL_WATCH_LIST`      | Label names to watch, separated by `,` | &nbsp; |
+| `ENABLE_LABEL_MISSING`  | Add a label missing if none selected   | `true`                    |
+| `LABEL_MISSING`         | The label mssing name                  | `label-missing` |
+| `ENABLE_LABEL_MULTIPLE` | Allow multiple labels selected         | `false`                   |
