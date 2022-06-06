@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -13,23 +14,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-type Action struct {
-}
-
-type ActionConfig struct {
-	Token  *string
-	Repo   *string
-	Owner  *string
-	Number *int
-
-	LabelWatchMap       map[string]struct{}
-	LabelMissing        *string
-	EnableLabelMissing  *bool
-	EnableLabelMultiple *bool
-
-	Labels map[string]bool
-}
-
 const (
 	MessageLabelMissing = `Please provide a correct documentation label for your PR.
 Instructions see [Pulsar Documentation Label Guide](https://docs.google.com/document/d/1Qw7LHQdXWBW9t2-r-A7QdFDBwmZh6ytB4guwMoXHqc0).`
@@ -37,215 +21,26 @@ Instructions see [Pulsar Documentation Label Guide](https://docs.google.com/docu
 Instructions see [Pulsar Documentation Label Guide](https://docs.google.com/document/d/1Qw7LHQdXWBW9t2-r-A7QdFDBwmZh6ytB4guwMoXHqc0).`
 )
 
-func extractLabels(prBody, labelPattern string, labelWatchMap map[string]struct{}) map[string]bool {
-	r := regexp.MustCompile(labelPattern)
-	targets := r.FindAllStringSubmatch(prBody, -1)
+type ActionConfig struct {
+	token  *string
+	repo   *string
+	owner  *string
+	number *int
 
-	labels := make(map[string]bool)
+	labelPattern        *string
+	labelWatchMap       map[string]struct{}
+	labelMissing        *string
+	enableLabelMissing  *bool
+	enableLabelMultiple *bool
 
-	for _, v := range targets {
-		//log.Printf("v: %#v\n", v)
-		checked := strings.ToLower(strings.TrimSpace(v[1])) == "x"
-		name := strings.TrimSpace(v[2])
-
-		// Filter uninterested labels
-		if _, exist := labelWatchMap[name]; !exist {
-			continue
-		}
-
-		labels[name] = checked
-	}
-
-	return labels
+	Labels map[string]bool
 }
 
-func getRepoLabels(client *github.Client, owner, repo string) ([]*github.Label, error) {
-	ctx := context.Background()
-	listOptions := &github.ListOptions{PerPage: 100}
-	repoLabels := make([]*github.Label, 0)
-	for {
-		rLabels, resp, err := client.Issues.ListLabels(ctx, owner, repo, listOptions)
-		if err != nil {
-			return nil, err
-		}
-		repoLabels = append(repoLabels, rLabels...)
-		if resp.NextPage == 0 {
-			break
-		}
-		listOptions.Page = resp.NextPage
-	}
-	return repoLabels, nil
-}
-
-func getIssueLabels(client *github.Client, owner, repo string, number int) ([]*github.Label, error) {
-	ctx := context.Background()
-	listOptions := &github.ListOptions{PerPage: 100}
-	issueLabels := make([]*github.Label, 0)
-	for {
-		iLabels, resp, err := client.Issues.ListLabelsByIssue(ctx, owner, repo, number, listOptions)
-		if err != nil {
-			return nil, err
-		}
-		issueLabels = append(issueLabels, iLabels...)
-		if resp.NextPage == 0 {
-			break
-		}
-		listOptions.Page = resp.NextPage
-	}
-	return issueLabels, nil
-}
-
-func run(token, owner, repo string, number int, labels map[string]bool, labelWatchMap map[string]struct{}, enableMissing bool, labelMissing string, enableLabelMultiple bool) {
-	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: token},
-	)
-
-	tc := oauth2.NewClient(ctx, ts)
-	client := github.NewClient(tc)
-
-	pr, _, err := client.PullRequests.Get(ctx, owner, repo, number)
-	if err != nil {
-		log.Printf("Get PR: %v\n", err)
-		return
-	}
-
-	// Get repo labels
-	log.Println("@List repo labels")
-	repoLabels, err := getRepoLabels(client, owner, repo)
-	if err != nil {
-		log.Fatalln("List repo labels: ", err)
-	}
-
-	repoLabelsMap := make(map[string]struct{})
-	for _, label := range repoLabels {
-		repoLabelsMap[label.GetName()] = struct{}{}
-	}
-	log.Printf("Repo labels: %v\n", repoLabelsMap)
-
-	// Get expected labels
-	// Only handle labels already exist in repo
-	for label := range labels {
-		if _, exist := repoLabelsMap[label]; !exist {
-			log.Printf("Found label %v not exist int repo\n", label)
-			delete(labels, label)
-		}
-	}
-	log.Printf("Expected labels: %v\n", labels)
-
-	// Get current labels on this PR
-	log.Println("@List current labels")
-	currentLabels, err := getIssueLabels(client, owner, repo, number)
-	if err != nil {
-		log.Fatalln("List current issue labels: ", err)
-	}
-
-	currentLabelsMap := make(map[string]struct{})
-	for _, label := range currentLabels {
-		currentLabelsMap[label.GetName()] = struct{}{}
-	}
-	log.Printf("Current labels: %v\n", currentLabelsMap)
-
-	// Remove labels
-	log.Println("@Remove labels")
-
-	labelsToRemove := []string{}
-	if len(labels) == 0 { // Remove current labels when PR body is empty
-		for l := range labelWatchMap {
-			if _, exist := currentLabelsMap[l]; exist {
-				labelsToRemove = append(labelsToRemove, l)
-			}
-		}
-	} else {
-		for _, label := range currentLabels {
-			if checked, exist := labels[label.GetName()]; exist && !checked {
-				labelsToRemove = append(labelsToRemove, label.GetName())
-			}
-		}
-	}
-
-	// Remove missing labels
-	checkedCount := 0
-	for _, checked := range labels {
-		if checked {
-			checkedCount++
-		}
-	}
-
-	if !enableLabelMultiple && checkedCount > 1 {
-		log.Println("Multiple labels detected")
-		_, _, err = client.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{
-			Body: func(v string) *string { return &v }(fmt.Sprintf("@%s %s", pr.User.GetLogin(), MessageLabelMultiple))})
-		if err != nil {
-			log.Printf("Create issue comment: %v\n", err)
-		}
-		log.Println(MessageLabelMultiple)
-		os.Exit(1)
-	}
-
-	if _, exist := currentLabelsMap[labelMissing]; exist && checkedCount > 0 {
-		labelsToRemove = append(labelsToRemove, labelMissing)
-	}
-
-	log.Printf("Labels to remove: %v\n", labelsToRemove)
-
-	for _, label := range labelsToRemove {
-		_, err := client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, label)
-		if err != nil {
-			log.Printf("Remove label %v: %v\n", label, err)
-		}
-	}
-
-	// Add labels
-	log.Println("@Add labels")
-
-	labelsToAdd := []string{}
-	for label, checked := range labels {
-		if !checked {
-			continue
-		}
-		if _, exist := currentLabelsMap[label]; !exist {
-			labelsToAdd = append(labelsToAdd, label)
-		}
-	}
-
-	if len(labelsToAdd) == 0 {
-		log.Println("No labels to add.")
-	} else {
-		log.Printf("Labels to add: %v\n", labelsToAdd)
-
-		_, _, err = client.Issues.AddLabelsToIssue(ctx, owner, repo, number, labelsToAdd)
-		if err != nil {
-			log.Printf("Add labels %v: %v\n", labelsToAdd, err)
-		}
-	}
-
-	// Add missing label
-	if enableMissing && checkedCount == 0 {
-		log.Println("@Add missing label")
-		_, _, err = client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{labelMissing})
-		if err != nil {
-			log.Printf("Add missing label %v: %v\n", labelMissing, err)
-		}
-
-		_, _, err = client.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{
-			Body: func(v string) *string { return &v }(fmt.Sprintf("@%s %s", pr.User.GetLogin(), MessageLabelMissing))})
-		if err != nil {
-			log.Printf("Create issue comment: %v\n", err)
-		}
-
-		log.Println(MessageLabelMissing)
-		os.Exit(1)
-	}
-}
-
-func main() {
-	log.Println("@Start docbot")
-
+func NewActionConfig() (*ActionConfig, error) {
 	ownerRepoSlug := os.Getenv("GITHUB_REPOSITORY")
 	ownerRepo := strings.Split(ownerRepoSlug, "/")
 	if len(ownerRepo) != 2 {
-		log.Fatalln("Not found owner/repo.")
+		return nil, fmt.Errorf("GITHUB_REPOSITORY is not found")
 	}
 	owner, repo := ownerRepo[0], ownerRepo[1]
 
@@ -281,9 +76,320 @@ func main() {
 		enableLabelMultiple = true
 	}
 
+	return &ActionConfig{
+		token:               &token,
+		repo:                &repo,
+		owner:               &owner,
+		labelPattern:        &labelPattern,
+		labelWatchMap:       labelWatchMap,
+		labelMissing:        &labelMissing,
+		enableLabelMissing:  &enableLabelMissing,
+		enableLabelMultiple: &enableLabelMultiple,
+	}, nil
+}
+
+func (ac *ActionConfig) GetToken() string {
+	if ac == nil || ac.token == nil {
+		return ""
+	}
+	return *ac.token
+}
+
+func (ac *ActionConfig) GetOwner() string {
+	if ac == nil || ac.owner == nil {
+		return ""
+	}
+	return *ac.owner
+}
+
+func (ac *ActionConfig) GetRepo() string {
+	if ac == nil || ac.repo == nil {
+		return ""
+	}
+	return *ac.repo
+}
+
+func (ac *ActionConfig) GetNumber() int {
+	if ac == nil || ac.number == nil {
+		return 0
+	}
+	return *ac.number
+}
+
+func (ac *ActionConfig) GetLabelPattern() string {
+	if ac == nil || ac.labelPattern == nil {
+		return ""
+	}
+	return *ac.labelPattern
+}
+
+func (ac *ActionConfig) GetLabelMissing() string {
+	if ac == nil || ac.labelMissing == nil {
+		return ""
+	}
+	return *ac.labelMissing
+}
+
+func (ac *ActionConfig) GetEnableLabelMissing() bool {
+	if ac == nil || ac.enableLabelMissing == nil {
+		return false
+	}
+	return *ac.enableLabelMissing
+}
+
+func (ac *ActionConfig) GetEnableLabelMultiple() bool {
+	if ac == nil || ac.enableLabelMultiple == nil {
+		return false
+	}
+	return *ac.enableLabelMultiple
+}
+
+type Action struct {
+	config *ActionConfig
+
+	globalContext context.Context
+	client        *github.Client
+}
+
+func NewAction(ac *ActionConfig) *Action {
+	ctx := context.Background()
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: ac.GetToken()},
+	)
+
+	tc := oauth2.NewClient(ctx, ts)
+
+	return &Action{
+		config:        ac,
+		globalContext: ctx,
+		client:        github.NewClient(tc),
+	}
+}
+
+func (a *Action) OnPullRequestOpened() error {
+	pr, _, err := a.client.PullRequests.Get(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber())
+	if err != nil {
+		return fmt.Errorf("get PR: %v", err)
+	}
+
+	// Get repo labels
+	log.Println("@List repo labels")
+	repoLabels, err := a.getRepoLabels()
+	if err != nil {
+		log.Fatalln("List repo labels: ", err)
+	}
+
+	repoLabelsMap := make(map[string]struct{})
+	for _, label := range repoLabels {
+		repoLabelsMap[label.GetName()] = struct{}{}
+	}
+	log.Printf("Repo labels: %v\n", repoLabelsMap)
+
+	// Get expected labels
+	// Only handle labels already exist in repo
+	for label := range a.config.Labels {
+		if _, exist := repoLabelsMap[label]; !exist {
+			log.Printf("Found label %v not exist int repo\n", label)
+			delete(a.config.Labels, label)
+		}
+	}
+	log.Printf("Expected labels: %v\n", a.config.Labels)
+
+	// Get current labels on this PR
+	log.Println("@List issue labels")
+	currentLabels, err := a.getIssueLabels()
+	if err != nil {
+		log.Fatalln("List current issue labels: ", err)
+	}
+
+	currentLabelsMap := make(map[string]struct{})
+	for _, label := range currentLabels {
+		currentLabelsMap[label.GetName()] = struct{}{}
+	}
+	log.Printf("Current labels: %v\n", currentLabelsMap)
+
+	// Remove labels
+	log.Println("@Remove labels")
+
+	labelsToRemove := []string{}
+	if len(a.config.Labels) == 0 { // Remove current labels when PR body is empty
+		for l := range a.config.labelWatchMap {
+			if _, exist := currentLabelsMap[l]; exist {
+				labelsToRemove = append(labelsToRemove, l)
+			}
+		}
+	} else {
+		for _, label := range currentLabels {
+			if checked, exist := a.config.Labels[label.GetName()]; exist && !checked {
+				labelsToRemove = append(labelsToRemove, label.GetName())
+			}
+		}
+	}
+
+	// Remove missing labels
+	checkedCount := 0
+	for _, checked := range a.config.Labels {
+		if checked {
+			checkedCount++
+		}
+	}
+
+	if !a.config.GetEnableLabelMultiple() && checkedCount > 1 {
+		log.Println("Multiple labels detected")
+		_, _, err = a.client.Issues.CreateComment(a.globalContext,
+			a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(),
+			&github.IssueComment{
+				Body: func(v string) *string { return &v }(fmt.Sprintf("@%s %s", pr.User.GetLogin(), MessageLabelMultiple))})
+		if err != nil {
+			return fmt.Errorf("create issue comment: %v", err)
+		}
+		return fmt.Errorf("%s", MessageLabelMultiple)
+	}
+
+	if _, exist := currentLabelsMap[a.config.GetLabelMissing()]; exist && checkedCount > 0 {
+		labelsToRemove = append(labelsToRemove, a.config.GetLabelMissing())
+	}
+
+	log.Printf("Labels to remove: %v\n", labelsToRemove)
+
+	for _, label := range labelsToRemove {
+		_, err := a.client.Issues.RemoveLabelForIssue(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(), label)
+		if err != nil {
+			return fmt.Errorf("remove label %v: %v", label, err)
+		}
+	}
+
+	// Add labels
+	log.Println("@Add labels")
+
+	labelsToAdd := []string{}
+	for label, checked := range a.config.Labels {
+		if !checked {
+			continue
+		}
+		if _, exist := currentLabelsMap[label]; !exist {
+			labelsToAdd = append(labelsToAdd, label)
+		}
+	}
+
+	if len(labelsToAdd) == 0 {
+		log.Println("No labels to add.")
+	} else {
+		log.Printf("Labels to add: %v\n", labelsToAdd)
+
+		_, _, err = a.client.Issues.AddLabelsToIssue(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(), labelsToAdd)
+		if err != nil {
+			log.Printf("Add labels %v: %v\n", labelsToAdd, err)
+		}
+	}
+
+	// Add missing label
+	if a.config.GetEnableLabelMissing() && checkedCount == 0 {
+		log.Println("@Add missing label")
+		_, _, err = a.client.Issues.AddLabelsToIssue(a.globalContext,
+			a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(),
+			[]string{a.config.GetLabelMissing()})
+		if err != nil {
+			return fmt.Errorf("add missing label %v: %v", a.config.GetLabelMissing(), err)
+		}
+
+		_, _, err = a.client.Issues.CreateComment(a.globalContext,
+			a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(),
+			&github.IssueComment{
+				Body: func(v string) *string { return &v }(fmt.Sprintf("@%s %s", pr.User.GetLogin(), MessageLabelMissing))})
+		if err != nil {
+			log.Printf("Create issue comment: %v\n", err)
+		}
+
+		return fmt.Errorf("%s", MessageLabelMissing)
+	}
+
+	return nil
+}
+
+func (a *Action) OnPullRequestEdited() {
+
+}
+
+func (a *Action) OnPullRequestLabeled() {
+
+}
+
+func (a *Action) extractLabels(prBody string) map[string]bool {
+	r := regexp.MustCompile(a.config.GetLabelPattern())
+	targets := r.FindAllStringSubmatch(prBody, -1)
+
+	labels := make(map[string]bool)
+
+	for _, v := range targets {
+		//log.Printf("v: %#v\n", v)
+		checked := strings.ToLower(strings.TrimSpace(v[1])) == "x"
+		name := strings.TrimSpace(v[2])
+
+		// Filter uninterested labels
+		if _, exist := a.config.labelWatchMap[name]; !exist {
+			continue
+		}
+
+		labels[name] = checked
+	}
+
+	return labels
+}
+
+func (a *Action) getRepoLabels() ([]*github.Label, error) {
+	ctx := context.Background()
+	listOptions := &github.ListOptions{PerPage: 100}
+	repoLabels := make([]*github.Label, 0)
+	for {
+		rLabels, resp, err := a.client.Issues.ListLabels(ctx, a.config.GetOwner(), a.config.GetRepo(), listOptions)
+		if err != nil {
+			return nil, err
+		}
+		repoLabels = append(repoLabels, rLabels...)
+		if resp.NextPage == 0 {
+			break
+		}
+		listOptions.Page = resp.NextPage
+	}
+	return repoLabels, nil
+}
+
+func (a *Action) getIssueLabels() ([]*github.Label, error) {
+	ctx := context.Background()
+	listOptions := &github.ListOptions{PerPage: 100}
+	issueLabels := make([]*github.Label, 0)
+	for {
+		iLabels, resp, err := a.client.Issues.ListLabelsByIssue(ctx, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(), listOptions)
+		if err != nil {
+			return nil, err
+		}
+		issueLabels = append(issueLabels, iLabels...)
+		if resp.NextPage == 0 {
+			break
+		}
+		listOptions.Page = resp.NextPage
+	}
+	return issueLabels, nil
+}
+
+func main() {
+	log.Println("@Start docbot")
+
+	actionConfig, err := NewActionConfig()
+	if err != nil {
+		log.Fatalf("Get action config: %v\n", err)
+	}
+
+	action := NewAction(actionConfig)
+
 	githubContext, err := githubactions.Context()
 	if err != nil {
 		log.Fatalf("Get github context: %v\n", err)
+	}
+
+	if githubContextBytes, err := json.Marshal(githubContext); err == nil {
+		log.Printf("githubContext: %v\n", string(githubContextBytes))
 	}
 
 	switch githubContext.EventName {
@@ -303,13 +409,16 @@ func main() {
 			log.Fatalln("PR body is not string")
 		}
 
-		log.Printf("pullRequest[\"number\"]: %#v\n", pullRequest["number"])
 		prNumber := int(pullRequest["number"].(float64))
 
 		// Get expected labels
-		labels := extractLabels(prBody, labelPattern, labelWatchMap)
-		log.Printf("labels: %#v\n", labels)
+		labels := action.extractLabels(prBody)
 
-		run(token, owner, repo, prNumber, labels, labelWatchMap, enableLabelMissing, labelMissing, enableLabelMultiple)
+		actionConfig.number = &prNumber
+		actionConfig.Labels = labels
+
+		if err := action.OnPullRequestOpened(); err != nil {
+			log.Fatalln(err)
+		}
 	}
 }
