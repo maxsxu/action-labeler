@@ -194,11 +194,11 @@ func (a *Action) OnPullRequestOpened() error {
 	}
 	log.Printf("Issue labels: %v\n", a.labelsToString(issueLabels))
 
-	// Get the intersection of issueLabels and labelWatchSet
+	// Get the intersection of issueLabels and labelWatchSet, including labelMissing
 	log.Println("@List current labels")
 	currentLabelsSet := make(map[string]struct{})
 	for _, label := range issueLabels {
-		if _, exist := a.config.labelWatchSet[label.GetName()]; !exist {
+		if _, exist := a.config.labelWatchSet[label.GetName()]; !exist && label.GetName() != a.config.GetLabelMissing() {
 			continue
 		}
 		currentLabelsSet[label.GetName()] = struct{}{}
@@ -244,7 +244,7 @@ func (a *Action) OnPullRequestOpened() error {
 	}
 
 	for label := range currentLabelsSet {
-		if _, exist := expectedLabelsMap[label]; !exist {
+		if _, exist := expectedLabelsMap[label]; !exist && label != a.config.GetLabelMissing() {
 			checkedCount++
 		}
 	}
