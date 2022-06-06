@@ -33,7 +33,8 @@ type ActionConfig struct {
 const (
 	MessageLabelMissing = `Please provide a correct documentation label for your PR.
 Instructions see [Pulsar Documentation Label Guide](https://docs.google.com/document/d/1Qw7LHQdXWBW9t2-r-A7QdFDBwmZh6ytB4guwMoXHqc0).`
-	MessageLabelMultiple = `Please select only one documentation label for your PR.`
+	MessageLabelMultiple = `Please select only one documentation label for your PR.
+Instructions see [Pulsar Documentation Label Guide](https://docs.google.com/document/d/1Qw7LHQdXWBW9t2-r-A7QdFDBwmZh6ytB4guwMoXHqc0).`
 )
 
 func extractLabels(prBody, labelPattern string, labelWatchMap map[string]struct{}) map[string]bool {
