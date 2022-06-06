@@ -13,6 +13,29 @@ import (
 	"golang.org/x/oauth2"
 )
 
+type Action struct {
+}
+
+type ActionConfig struct {
+	Token  *string
+	Repo   *string
+	Owner  *string
+	Number *int
+
+	LabelWatchMap       map[string]struct{}
+	LabelMissing        *string
+	EnableLabelMissing  *bool
+	EnableLabelMultiple *bool
+
+	Labels map[string]bool
+}
+
+const (
+	MessageLabelMissing = `Please provide a correct documentation label for your PR.
+Instructions see [Pulsar Documentation Label Guide](https://docs.google.com/document/d/1Qw7LHQdXWBW9t2-r-A7QdFDBwmZh6ytB4guwMoXHqc0).`
+	MessageLabelMultiple = `Please select only one documentation label for your PR.`
+)
+
 func extractLabels(prBody, labelPattern string, labelWatchMap map[string]struct{}) map[string]bool {
 	r := regexp.MustCompile(labelPattern)
 	targets := r.FindAllStringSubmatch(prBody, -1)
@@ -151,12 +174,12 @@ func run(token, owner, repo string, number int, labels map[string]bool, labelWat
 	if !enableLabelMultiple && checkedCount > 1 {
 		log.Println("Multiple labels detected")
 		_, _, err = client.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{
-			Body: func(v string) *string { return &v }(fmt.Sprintf("@%s Please select only one label.", pr.User.GetLogin()))})
+			Body: func(v string) *string { return &v }(fmt.Sprintf("@%s %s", pr.User.GetLogin(), MessageLabelMultiple))})
 		if err != nil {
 			log.Printf("Create issue comment: %v\n", err)
-			return
 		}
-		return
+		log.Println(MessageLabelMultiple)
+		os.Exit(1)
 	}
 
 	if _, exist := currentLabelsMap[labelMissing]; exist && checkedCount > 0 {
@@ -203,6 +226,14 @@ func run(token, owner, repo string, number int, labels map[string]bool, labelWat
 		if err != nil {
 			log.Printf("Add missing label %v: %v\n", labelMissing, err)
 		}
+
+		_, _, err = client.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{
+			Body: func(v string) *string { return &v }(fmt.Sprintf("@%s %s", pr.User.GetLogin(), MessageLabelMissing))})
+		if err != nil {
+			log.Printf("Create issue comment: %v\n", err)
+		}
+
+		log.Println(MessageLabelMissing)
 		os.Exit(1)
 	}
 }
@@ -225,7 +256,6 @@ func main() {
 	}
 
 	labelWatchListSlug := os.Getenv("LABEL_WATCH_LIST")
-	log.Printf("labelWatchListSlug: %v\n", labelWatchListSlug)
 	labelWatchList := strings.Split(strings.TrimSpace(labelWatchListSlug), ",")
 
 	labelWatchMap := make(map[string]struct{})
@@ -250,21 +280,10 @@ func main() {
 		enableLabelMultiple = true
 	}
 
-	log.Printf("owner=%v,repo=%v\n", owner, repo)
-	log.Println("token=", token)
-	log.Println("labelPattern=", labelPattern)
-	log.Println("labelWatchList=", labelWatchList)
-
 	githubContext, err := githubactions.Context()
 	if err != nil {
 		log.Fatalf("Get github context: %v\n", err)
 	}
-
-	//githubContextBytes, err := json.Marshal(githubContext)
-	//if err != nil {
-	//	log.Fatalf("JSON Marshal github context: ", err)
-	//}
-	//log.Printf("githubContext: %v\n", string(githubContextBytes))
 
 	switch githubContext.EventName {
 	case "issues":
@@ -286,10 +305,7 @@ func main() {
 		log.Printf("pullRequest[\"number\"]: %#v\n", pullRequest["number"])
 		prNumber := int(pullRequest["number"].(float64))
 
-		//log.Println("PR Body: ", prBody)
-
 		// Get expected labels
-
 		labels := extractLabels(prBody, labelPattern, labelWatchMap)
 		log.Printf("labels: %#v\n", labels)
 
