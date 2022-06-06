@@ -2,6 +2,7 @@
 
 Automatically label pull requests based on the checked task list.
 
+
 ## Usage
 
 Create a workflow `.github/workflows/ci-docbot.yml` with below content:
