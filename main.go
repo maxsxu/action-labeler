@@ -243,9 +243,10 @@ func (a *Action) run(actionType string) error {
 		}
 	} else {
 		for label := range currentLabelsSet {
-			if checked, exist := expectedLabelsMap[label]; exist && !checked {
-				labelsToRemove = append(labelsToRemove, label)
+			if checked, exist := expectedLabelsMap[label]; exist && checked {
+				continue
 			}
+			labelsToRemove = append(labelsToRemove, label)
 		}
 	}
 
