@@ -203,6 +203,7 @@ func run(token, owner, repo string, number int, labels map[string]bool, labelWat
 		if err != nil {
 			log.Printf("Add missing label %v: %v\n", labelMissing, err)
 		}
+		os.Exit(1)
 	}
 }
 
