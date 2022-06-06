@@ -25,6 +25,7 @@ on:
       - opened
       - edited
       - labeled
+      - unlabeled
 
 jobs:
   label:
