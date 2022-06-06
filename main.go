@@ -28,12 +28,13 @@ type ActionConfig struct {
 	number *int
 
 	labelPattern        *string
-	labelWatchMap       map[string]struct{}
+	labelWatchSet       map[string]struct{}
 	labelMissing        *string
 	enableLabelMissing  *bool
 	enableLabelMultiple *bool
 
-	Labels map[string]bool
+	// labels extracted from PR body
+	labels map[string]bool
 }
 
 func NewActionConfig() (*ActionConfig, error) {
@@ -81,7 +82,7 @@ func NewActionConfig() (*ActionConfig, error) {
 		repo:                &repo,
 		owner:               &owner,
 		labelPattern:        &labelPattern,
-		labelWatchMap:       labelWatchMap,
+		labelWatchSet:       labelWatchMap,
 		labelMissing:        &labelMissing,
 		enableLabelMissing:  &enableLabelMissing,
 		enableLabelMultiple: &enableLabelMultiple,
@@ -178,58 +179,72 @@ func (a *Action) OnPullRequestOpened() error {
 	if err != nil {
 		log.Fatalln("List repo labels: ", err)
 	}
+	log.Printf("Repo labels: %v\n", a.labelsToString(repoLabels))
 
-	repoLabelsMap := make(map[string]struct{})
+	repoLabelsSet := make(map[string]struct{})
 	for _, label := range repoLabels {
-		repoLabelsMap[label.GetName()] = struct{}{}
+		repoLabelsSet[label.GetName()] = struct{}{}
 	}
-	log.Printf("Repo labels: %v\n", repoLabelsMap)
-
-	// Get expected labels
-	// Only handle labels already exist in repo
-	for label := range a.config.Labels {
-		if _, exist := repoLabelsMap[label]; !exist {
-			log.Printf("Found label %v not exist int repo\n", label)
-			delete(a.config.Labels, label)
-		}
-	}
-	log.Printf("Expected labels: %v\n", a.config.Labels)
 
 	// Get current labels on this PR
 	log.Println("@List issue labels")
-	currentLabels, err := a.getIssueLabels()
+	issueLabels, err := a.getIssueLabels()
 	if err != nil {
 		log.Fatalln("List current issue labels: ", err)
 	}
+	log.Printf("Issue labels: %v\n", a.labelsToString(issueLabels))
 
-	currentLabelsMap := make(map[string]struct{})
-	for _, label := range currentLabels {
-		currentLabelsMap[label.GetName()] = struct{}{}
+	// Get the intersection of issueLabels and labelWatchSet
+	log.Println("@List current labels")
+	currentLabelsSet := make(map[string]struct{})
+	for _, label := range issueLabels {
+		if _, exist := a.config.labelWatchSet[label.GetName()]; !exist {
+			continue
+		}
+		currentLabelsSet[label.GetName()] = struct{}{}
 	}
-	log.Printf("Current labels: %v\n", currentLabelsMap)
+	log.Printf("Current labels: %v\n", a.labelsSetToString(currentLabelsSet))
+
+	// Get expected labels
+	// Only handle labels already exist in repo
+	log.Println("@List expected labels")
+	expectedLabelsMap := make(map[string]bool)
+	for label, checked := range a.config.labels {
+		if _, exist := repoLabelsSet[label]; !exist {
+			log.Printf("Found label %v not exist int repo\n", label)
+			continue
+		}
+		expectedLabelsMap[label] = checked
+	}
+	log.Printf("Expected labels: %v\n", expectedLabelsMap)
 
 	// Remove labels
 	log.Println("@Remove labels")
-
 	labelsToRemove := []string{}
-	if len(a.config.Labels) == 0 { // Remove current labels when PR body is empty
-		for l := range a.config.labelWatchMap {
-			if _, exist := currentLabelsMap[l]; exist {
+	if len(expectedLabelsMap) == 0 { // Remove current labels when PR body is empty
+		for l := range a.config.labelWatchSet {
+			if _, exist := currentLabelsSet[l]; exist {
 				labelsToRemove = append(labelsToRemove, l)
 			}
 		}
 	} else {
-		for _, label := range currentLabels {
-			if checked, exist := a.config.Labels[label.GetName()]; exist && !checked {
-				labelsToRemove = append(labelsToRemove, label.GetName())
+		for label := range currentLabelsSet {
+			if checked, exist := expectedLabelsMap[label]; exist && !checked {
+				labelsToRemove = append(labelsToRemove, label)
 			}
 		}
 	}
 
 	// Remove missing labels
 	checkedCount := 0
-	for _, checked := range a.config.Labels {
+	for _, checked := range expectedLabelsMap {
 		if checked {
+			checkedCount++
+		}
+	}
+
+	for label := range currentLabelsSet {
+		if _, exist := expectedLabelsMap[label]; !exist {
 			checkedCount++
 		}
 	}
@@ -246,7 +261,7 @@ func (a *Action) OnPullRequestOpened() error {
 		return fmt.Errorf("%s", MessageLabelMultiple)
 	}
 
-	if _, exist := currentLabelsMap[a.config.GetLabelMissing()]; exist && checkedCount > 0 {
+	if _, exist := currentLabelsSet[a.config.GetLabelMissing()]; exist && checkedCount > 0 {
 		labelsToRemove = append(labelsToRemove, a.config.GetLabelMissing())
 	}
 
@@ -263,11 +278,11 @@ func (a *Action) OnPullRequestOpened() error {
 	log.Println("@Add labels")
 
 	labelsToAdd := []string{}
-	for label, checked := range a.config.Labels {
+	for label, checked := range expectedLabelsMap {
 		if !checked {
 			continue
 		}
-		if _, exist := currentLabelsMap[label]; !exist {
+		if _, exist := currentLabelsSet[label]; !exist {
 			labelsToAdd = append(labelsToAdd, label)
 		}
 	}
@@ -307,12 +322,16 @@ func (a *Action) OnPullRequestOpened() error {
 	return nil
 }
 
-func (a *Action) OnPullRequestEdited() {
-
+func (a *Action) OnPullRequestEdited() error {
+	return a.OnPullRequestOpened()
 }
 
-func (a *Action) OnPullRequestLabeled() {
+func (a *Action) OnPullRequestLabeled() error {
+	return a.OnPullRequestOpened()
+}
 
+func (a *Action) OnPullRequestUnlabeled() error {
+	return a.OnPullRequestOpened()
 }
 
 func (a *Action) extractLabels(prBody string) map[string]bool {
@@ -327,7 +346,7 @@ func (a *Action) extractLabels(prBody string) map[string]bool {
 		name := strings.TrimSpace(v[2])
 
 		// Filter uninterested labels
-		if _, exist := a.config.labelWatchMap[name]; !exist {
+		if _, exist := a.config.labelWatchSet[name]; !exist {
 			continue
 		}
 
@@ -373,6 +392,22 @@ func (a *Action) getIssueLabels() ([]*github.Label, error) {
 	return issueLabels, nil
 }
 
+func (a *Action) labelsToString(labels []*github.Label) []string {
+	result := []string{}
+	for _, label := range labels {
+		result = append(result, label.GetName())
+	}
+	return result
+}
+
+func (a *Action) labelsSetToString(labels map[string]struct{}) []string {
+	result := []string{}
+	for label := range labels {
+		result = append(result, label)
+	}
+	return result
+}
+
 func main() {
 	log.Println("@Start docbot")
 
@@ -398,27 +433,47 @@ func main() {
 	case "pull_request", "pull_request_target":
 		log.Println("@EventName is PR")
 
+		actionType, ok := githubContext.Event["action"].(string)
+		if !ok {
+			log.Fatalln("Action type is not string")
+		}
+
 		pr := githubContext.Event["pull_request"]
 		pullRequest, ok := pr.(map[string]interface{})
 		if !ok {
 			log.Fatalln("PR event is not map")
 		}
 
+		number := int(githubContext.Event["number"].(float64))
+
 		prBody, ok := pullRequest["body"].(string)
 		if !ok {
 			log.Fatalln("PR body is not string")
 		}
 
-		prNumber := int(pullRequest["number"].(float64))
-
 		// Get expected labels
 		labels := action.extractLabels(prBody)
 
-		actionConfig.number = &prNumber
-		actionConfig.Labels = labels
+		actionConfig.number = &number
+		actionConfig.labels = labels
 
-		if err := action.OnPullRequestOpened(); err != nil {
-			log.Fatalln(err)
+		switch actionType {
+		case "opened":
+			if err := action.OnPullRequestOpened(); err != nil {
+				log.Fatalln(err)
+			}
+		case "edited":
+			if err := action.OnPullRequestEdited(); err != nil {
+				log.Fatalln(err)
+			}
+		case "labeled":
+			if err := action.OnPullRequestLabeled(); err != nil {
+				log.Fatalln(err)
+			}
+		case "unlabeled":
+			if err := action.OnPullRequestUnlabeled(); err != nil {
+				log.Fatalln(err)
+			}
 		}
 	}
 }
