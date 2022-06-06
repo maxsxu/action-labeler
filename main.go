@@ -252,13 +252,14 @@ func (a *Action) run(actionType string) error {
 
 	// Remove missing labels
 	checkedCount := 0
-	for _, checked := range expectedLabelsMap {
-		if checked {
-			checkedCount++
+	switch actionType {
+	case "opened", "edited":
+		for _, checked := range expectedLabelsMap {
+			if checked {
+				checkedCount++
+			}
 		}
-	}
-
-	if actionType == "labeled" || actionType == "unlabeled" {
+	case "labeled", "unlabeled":
 		for label := range currentLabelsSet {
 			if _, exist := expectedLabelsMap[label]; !exist && label != a.config.GetLabelMissing() {
 				checkedCount++
