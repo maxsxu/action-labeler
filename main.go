@@ -454,19 +454,27 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 	}
 
 	body := pr.GetBody()
-
 	for label, checked := range changeList {
-		if checked {
-			body = strings.Replace(body, fmt.Sprintf("- [ ] `%s`", label), fmt.Sprintf("- [x] `%s`", label), 1)
-		} else {
-			body = strings.Replace(body, fmt.Sprintf("- [x] `%s`", label), fmt.Sprintf("- [ ] `%s`", label), 1)
+		src := fmt.Sprintf("- [ ] `%s`", label)
+		dst := fmt.Sprintf("- [x] `%s`", label)
+		if !checked {
+			src = fmt.Sprintf("- [x] `%s`", label)
+			dst = fmt.Sprintf("- [ ] `%s`", label)
+		}
+
+		if strings.Contains(body, src) { // Update the label
+			body = strings.Replace(body, src, dst, 1)
+		} else { // Add the label
+			body = fmt.Sprintf("%s\r\n%s\r\n", body, dst)
 		}
 	}
 
-	_, _, err = a.client.PullRequests.Edit(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(),
-		&github.PullRequest{Body: &body})
-	if err != nil {
-		return fmt.Errorf("edit PR: %v", err)
+	if len(changeList) > 0 {
+		_, _, err = a.client.PullRequests.Edit(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(),
+			&github.PullRequest{Body: &body})
+		if err != nil {
+			return fmt.Errorf("edit PR: %v", err)
+		}
 	}
 
 	return nil
