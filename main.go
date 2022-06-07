@@ -233,23 +233,26 @@ func (a *Action) OnPullRequestOpenedOrEdited() error {
 
 	// Remove labels
 	log.Println("@Remove labels")
-	labelsToRemove := []string{}
+	labelsToRemove := make(map[string]struct{})
 	if len(expectedLabelsMap) == 0 { // Remove current labels when PR body is empty
 		for l := range a.config.labelWatchSet {
 			if _, exist := currentLabelsSet[l]; exist {
-				labelsToRemove = append(labelsToRemove, l)
+				labelsToRemove[l] = struct{}{}
 			}
 		}
 	} else {
 		for label := range currentLabelsSet {
+			if label == a.config.GetLabelMissing() {
+				continue
+			}
 			if checked, exist := expectedLabelsMap[label]; exist && checked {
 				continue
 			}
-			labelsToRemove = append(labelsToRemove, label)
+			labelsToRemove[label] = struct{}{}
 		}
 	}
 
-	// Remove missing labels
+	// Remove missing label
 	checkedCount := 0
 	for _, checked := range expectedLabelsMap {
 		if checked {
@@ -270,12 +273,12 @@ func (a *Action) OnPullRequestOpenedOrEdited() error {
 	}
 
 	if _, exist := currentLabelsSet[a.config.GetLabelMissing()]; exist && checkedCount > 0 {
-		labelsToRemove = append(labelsToRemove, a.config.GetLabelMissing())
+		labelsToRemove[a.config.GetLabelMissing()] = struct{}{}
 	}
 
-	log.Printf("Labels to remove: %v\n", labelsToRemove)
+	log.Printf("Labels to remove: %v\n", a.labelsSetToString(labelsToRemove))
 
-	for _, label := range labelsToRemove {
+	for label := range labelsToRemove {
 		_, err := a.client.Issues.RemoveLabelForIssue(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(), label)
 		if err != nil {
 			return fmt.Errorf("remove label %v: %v", label, err)
