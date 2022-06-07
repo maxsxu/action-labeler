@@ -149,6 +149,9 @@ type Action struct {
 
 	globalContext context.Context
 	client        *github.Client
+
+	// opened, edited, labeled, unlabeled
+	event string
 }
 
 func NewAction(ac *ActionConfig) *Action {
@@ -167,6 +170,7 @@ func NewAction(ac *ActionConfig) *Action {
 }
 
 func (a *Action) Run(actionType string) error {
+	a.event = actionType
 	switch actionType {
 	case "opened", "edited":
 		return a.OnPullRequestOpenedOrEdited()
@@ -434,6 +438,10 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 
 	// Update PR Body
 	// Compare current labels and expected labels
+	if a.event == "unlabeled" {
+		return nil
+	}
+
 	changeList := make(map[string]bool)
 	for label := range currentLabelsSet {
 		if checked, exist := expectedLabelsMap[label]; exist && checked {
@@ -470,6 +478,9 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 	}
 
 	if len(changeList) > 0 {
+		log.Println("@Update PR body")
+		log.Printf("ChangeList: %v\n", changeList)
+
 		_, _, err = a.client.PullRequests.Edit(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(),
 			&github.PullRequest{Body: &body})
 		if err != nil {
