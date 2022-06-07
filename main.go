@@ -458,8 +458,8 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 		changeList[label] = true
 	}
 
-	for label := range expectedLabelsMap {
-		if _, exist := currentLabelsSet[label]; !exist {
+	for label, checked := range expectedLabelsMap {
+		if _, exist := currentLabelsSet[label]; !exist && checked {
 			changeList[label] = false
 		}
 	}
