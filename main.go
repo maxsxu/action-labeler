@@ -385,10 +385,10 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 	log.Printf("Expected labels: %v\n", expectedLabelsMap)
 
 	// Remove missing label
-	labelsToRemove := []string{}
+	labelsToRemove := make(map[string]struct{})
 	checkedCount := 0
 	for label := range currentLabelsSet {
-		if _, exist := expectedLabelsMap[label]; !exist && label != a.config.GetLabelMissing() {
+		if label != a.config.GetLabelMissing() {
 			checkedCount++
 		}
 	}
@@ -406,12 +406,12 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 	}
 
 	if _, exist := currentLabelsSet[a.config.GetLabelMissing()]; exist && checkedCount > 0 {
-		labelsToRemove = append(labelsToRemove, a.config.GetLabelMissing())
+		labelsToRemove[a.config.GetLabelMissing()] = struct{}{}
 	}
 
 	log.Printf("Labels to remove: %v\n", labelsToRemove)
 
-	for _, label := range labelsToRemove {
+	for label := range labelsToRemove {
 		_, err := a.client.Issues.RemoveLabelForIssue(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(), label)
 		if err != nil {
 			return fmt.Errorf("remove label %v: %v", label, err)
