@@ -167,21 +167,16 @@ func NewAction(ac *ActionConfig) *Action {
 }
 
 func (a *Action) Run(actionType string) error {
-	//switch actionType {
-	//case "opened":
-	//	return a.OnPullRequestOpened()
-	//case "edited":
-	//	return a.OnPullRequestEdited()
-	//case "labeled":
-	//	return a.OnPullRequestLabeled()
-	//case "unlabeled":
-	//	return a.OnPullRequestUnlabeled()
-	//}
-	//return nil
-	return a.run(actionType)
+	switch actionType {
+	case "opened", "edited":
+		return a.OnPullRequestOpenedOrEdited()
+	case "labeled", "unlabeled":
+		return a.OnPullRequestLabeledOrUnlabeled()
+	}
+	return nil
 }
 
-func (a *Action) run(actionType string) error {
+func (a *Action) OnPullRequestOpenedOrEdited() error {
 	pr, _, err := a.client.PullRequests.Get(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber())
 	if err != nil {
 		return fmt.Errorf("get PR: %v", err)
@@ -252,18 +247,9 @@ func (a *Action) run(actionType string) error {
 
 	// Remove missing labels
 	checkedCount := 0
-	switch actionType {
-	case "opened", "edited":
-		for _, checked := range expectedLabelsMap {
-			if checked {
-				checkedCount++
-			}
-		}
-	case "labeled", "unlabeled":
-		for label := range currentLabelsSet {
-			if _, exist := expectedLabelsMap[label]; !exist && label != a.config.GetLabelMissing() {
-				checkedCount++
-			}
+	for _, checked := range expectedLabelsMap {
+		if checked {
+			checkedCount++
 		}
 	}
 
@@ -340,7 +326,7 @@ func (a *Action) run(actionType string) error {
 	return nil
 }
 
-func (a *Action) OnPullRequestOpened() error {
+func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 	pr, _, err := a.client.PullRequests.Get(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber())
 	if err != nil {
 		return fmt.Errorf("get PR: %v", err)
@@ -391,31 +377,9 @@ func (a *Action) OnPullRequestOpened() error {
 	}
 	log.Printf("Expected labels: %v\n", expectedLabelsMap)
 
-	// Remove labels
-	log.Println("@Remove labels")
+	// Remove missing label
 	labelsToRemove := []string{}
-	if len(expectedLabelsMap) == 0 { // Remove current labels when PR body is empty
-		for l := range a.config.labelWatchSet {
-			if _, exist := currentLabelsSet[l]; exist {
-				labelsToRemove = append(labelsToRemove, l)
-			}
-		}
-	} else {
-		for label := range currentLabelsSet {
-			if checked, exist := expectedLabelsMap[label]; exist && !checked {
-				labelsToRemove = append(labelsToRemove, label)
-			}
-		}
-	}
-
-	// Remove missing labels
 	checkedCount := 0
-	for _, checked := range expectedLabelsMap {
-		if checked {
-			checkedCount++
-		}
-	}
-
 	for label := range currentLabelsSet {
 		if _, exist := expectedLabelsMap[label]; !exist && label != a.config.GetLabelMissing() {
 			checkedCount++
@@ -447,30 +411,6 @@ func (a *Action) OnPullRequestOpened() error {
 		}
 	}
 
-	// Add labels
-	log.Println("@Add labels")
-
-	labelsToAdd := []string{}
-	for label, checked := range expectedLabelsMap {
-		if !checked {
-			continue
-		}
-		if _, exist := currentLabelsSet[label]; !exist {
-			labelsToAdd = append(labelsToAdd, label)
-		}
-	}
-
-	if len(labelsToAdd) == 0 {
-		log.Println("No labels to add.")
-	} else {
-		log.Printf("Labels to add: %v\n", labelsToAdd)
-
-		_, _, err = a.client.Issues.AddLabelsToIssue(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(), labelsToAdd)
-		if err != nil {
-			log.Printf("Add labels %v: %v\n", labelsToAdd, err)
-		}
-	}
-
 	// Add missing label
 	if a.config.GetEnableLabelMissing() && checkedCount == 0 {
 		log.Println("@Add missing label")
@@ -492,19 +432,44 @@ func (a *Action) OnPullRequestOpened() error {
 		return fmt.Errorf("%s", MessageLabelMissing)
 	}
 
+	// Update PR Body
+	// Compare current labels and expected labels
+	changeList := make(map[string]bool)
+	for label := range currentLabelsSet {
+		if checked, exist := expectedLabelsMap[label]; exist && checked {
+			continue
+		}
+
+		// If not exist, need to add
+
+		// If exist but not checked, need to update
+
+		changeList[label] = true
+	}
+
+	for label := range expectedLabelsMap {
+		if _, exist := currentLabelsSet[label]; !exist {
+			changeList[label] = false
+		}
+	}
+
+	body := pr.GetBody()
+
+	for label, checked := range changeList {
+		if checked {
+			body = strings.Replace(body, fmt.Sprintf("- [ ] `%s`", label), fmt.Sprintf("- [x] `%s`", label), 1)
+		} else {
+			body = strings.Replace(body, fmt.Sprintf("- [x] `%s`", label), fmt.Sprintf("- [ ] `%s`", label), 1)
+		}
+	}
+
+	_, _, err = a.client.PullRequests.Edit(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(),
+		&github.PullRequest{Body: &body})
+	if err != nil {
+		return fmt.Errorf("edit PR: %v", err)
+	}
+
 	return nil
-}
-
-func (a *Action) OnPullRequestEdited() error {
-	return a.OnPullRequestOpened()
-}
-
-func (a *Action) OnPullRequestLabeled() error {
-	return a.OnPullRequestOpened()
-}
-
-func (a *Action) OnPullRequestUnlabeled() error {
-	return a.OnPullRequestOpened()
 }
 
 func (a *Action) extractLabels(prBody string) map[string]bool {
