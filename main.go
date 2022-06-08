@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"regexp"
 	"strings"
@@ -12,6 +11,8 @@ import (
 	"github.com/google/go-github/v45/github"
 	"github.com/sethvargo/go-githubactions"
 	"golang.org/x/oauth2"
+
+	"github.com/maxsxu/action-labeler/pkg/logger"
 )
 
 const (
@@ -173,26 +174,26 @@ func (a *Action) Run(actionType string) error {
 	a.event = actionType
 	switch actionType {
 	case "opened", "edited":
-		return a.OnPullRequestOpenedOrEdited()
+		return a.onPullRequestOpenedOrEdited()
 	case "labeled", "unlabeled":
-		return a.OnPullRequestLabeledOrUnlabeled()
+		return a.onPullRequestLabeledOrUnlabeled()
 	}
 	return nil
 }
 
-func (a *Action) OnPullRequestOpenedOrEdited() error {
+func (a *Action) onPullRequestOpenedOrEdited() error {
 	pr, _, err := a.client.PullRequests.Get(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber())
 	if err != nil {
 		return fmt.Errorf("get PR: %v", err)
 	}
 
 	// Get repo labels
-	log.Println("@List repo labels")
+	logger.Infoln("@List repo labels")
 	repoLabels, err := a.getRepoLabels()
 	if err != nil {
-		log.Fatalln("List repo labels: ", err)
+		return fmt.Errorf("list repo labels: %v", err)
 	}
-	log.Printf("Repo labels: %v\n", a.labelsToString(repoLabels))
+	logger.Infof("Repo labels: %v\n", a.labelsToString(repoLabels))
 
 	repoLabelsSet := make(map[string]struct{})
 	for _, label := range repoLabels {
@@ -200,15 +201,15 @@ func (a *Action) OnPullRequestOpenedOrEdited() error {
 	}
 
 	// Get current labels on this PR
-	log.Println("@List issue labels")
+	logger.Infoln("@List issue labels")
 	issueLabels, err := a.getIssueLabels()
 	if err != nil {
-		log.Fatalln("List current issue labels: ", err)
+		return fmt.Errorf("list current issue labels: %v", err)
 	}
-	log.Printf("Issue labels: %v\n", a.labelsToString(issueLabels))
+	logger.Infof("Issue labels: %v\n", a.labelsToString(issueLabels))
 
 	// Get the intersection of issueLabels and labelWatchSet, including labelMissing
-	log.Println("@List current labels")
+	logger.Infoln("@List current labels")
 	currentLabelsSet := make(map[string]struct{})
 	for _, label := range issueLabels {
 		if _, exist := a.config.labelWatchSet[label.GetName()]; !exist && label.GetName() != a.config.GetLabelMissing() {
@@ -216,23 +217,23 @@ func (a *Action) OnPullRequestOpenedOrEdited() error {
 		}
 		currentLabelsSet[label.GetName()] = struct{}{}
 	}
-	log.Printf("Current labels: %v\n", a.labelsSetToString(currentLabelsSet))
+	logger.Infof("Current labels: %v\n", a.labelsSetToString(currentLabelsSet))
 
 	// Get expected labels
 	// Only handle labels already exist in repo
-	log.Println("@List expected labels")
+	logger.Infoln("@List expected labels")
 	expectedLabelsMap := make(map[string]bool)
 	for label, checked := range a.config.labels {
 		if _, exist := repoLabelsSet[label]; !exist {
-			log.Printf("Found label %v not exist int repo\n", label)
+			logger.Infof("Found label %v not exist int repo\n", label)
 			continue
 		}
 		expectedLabelsMap[label] = checked
 	}
-	log.Printf("Expected labels: %v\n", expectedLabelsMap)
+	logger.Infof("Expected labels: %v\n", expectedLabelsMap)
 
 	// Remove labels
-	log.Println("@Remove labels")
+	logger.Infoln("@Remove labels")
 	labelsToRemove := make(map[string]struct{})
 	if len(expectedLabelsMap) == 0 { // Remove current labels when PR body is empty
 		for l := range a.config.labelWatchSet {
@@ -261,7 +262,7 @@ func (a *Action) OnPullRequestOpenedOrEdited() error {
 	}
 
 	if !a.config.GetEnableLabelMultiple() && checkedCount > 1 {
-		log.Println("Multiple labels detected")
+		logger.Infoln("Multiple labels detected")
 		_, _, err = a.client.Issues.CreateComment(a.globalContext,
 			a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(),
 			&github.IssueComment{
@@ -276,7 +277,7 @@ func (a *Action) OnPullRequestOpenedOrEdited() error {
 		labelsToRemove[a.config.GetLabelMissing()] = struct{}{}
 	}
 
-	log.Printf("Labels to remove: %v\n", a.labelsSetToString(labelsToRemove))
+	logger.Infof("Labels to remove: %v\n", a.labelsSetToString(labelsToRemove))
 
 	for label := range labelsToRemove {
 		_, err := a.client.Issues.RemoveLabelForIssue(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(), label)
@@ -286,7 +287,7 @@ func (a *Action) OnPullRequestOpenedOrEdited() error {
 	}
 
 	// Add labels
-	log.Println("@Add labels")
+	logger.Infoln("@Add labels")
 
 	labelsToAdd := []string{}
 	for label, checked := range expectedLabelsMap {
@@ -299,19 +300,19 @@ func (a *Action) OnPullRequestOpenedOrEdited() error {
 	}
 
 	if len(labelsToAdd) == 0 {
-		log.Println("No labels to add.")
+		logger.Infoln("No labels to add.")
 	} else {
-		log.Printf("Labels to add: %v\n", labelsToAdd)
+		logger.Infof("Labels to add: %v\n", labelsToAdd)
 
 		_, _, err = a.client.Issues.AddLabelsToIssue(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(), labelsToAdd)
 		if err != nil {
-			log.Printf("Add labels %v: %v\n", labelsToAdd, err)
+			logger.Infof("Add labels %v: %v\n", labelsToAdd, err)
 		}
 	}
 
 	// Add missing label
 	if a.config.GetEnableLabelMissing() && checkedCount == 0 {
-		log.Println("@Add missing label")
+		logger.Infoln("@Add missing label")
 		_, _, err = a.client.Issues.AddLabelsToIssue(a.globalContext,
 			a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(),
 			[]string{a.config.GetLabelMissing()})
@@ -324,7 +325,7 @@ func (a *Action) OnPullRequestOpenedOrEdited() error {
 			&github.IssueComment{
 				Body: func(v string) *string { return &v }(fmt.Sprintf("@%s %s", pr.User.GetLogin(), MessageLabelMissing))})
 		if err != nil {
-			log.Printf("Create issue comment: %v\n", err)
+			logger.Infof("Create issue comment: %v\n", err)
 		}
 
 		return fmt.Errorf("%s", MessageLabelMissing)
@@ -333,19 +334,19 @@ func (a *Action) OnPullRequestOpenedOrEdited() error {
 	return nil
 }
 
-func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
+func (a *Action) onPullRequestLabeledOrUnlabeled() error {
 	pr, _, err := a.client.PullRequests.Get(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber())
 	if err != nil {
 		return fmt.Errorf("get PR: %v", err)
 	}
 
 	// Get repo labels
-	log.Println("@List repo labels")
+	logger.Infoln("@List repo labels")
 	repoLabels, err := a.getRepoLabels()
 	if err != nil {
-		log.Fatalln("List repo labels: ", err)
+		return fmt.Errorf("list repo labels: %v", err)
 	}
-	log.Printf("Repo labels: %v\n", a.labelsToString(repoLabels))
+	logger.Infof("Repo labels: %v\n", a.labelsToString(repoLabels))
 
 	repoLabelsSet := make(map[string]struct{})
 	for _, label := range repoLabels {
@@ -353,15 +354,15 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 	}
 
 	// Get current labels on this PR
-	log.Println("@List issue labels")
+	logger.Infoln("@List issue labels")
 	issueLabels, err := a.getIssueLabels()
 	if err != nil {
-		log.Fatalln("List current issue labels: ", err)
+		return fmt.Errorf("list current issue labels: %v", err)
 	}
-	log.Printf("Issue labels: %v\n", a.labelsToString(issueLabels))
+	logger.Infof("Issue labels: %v\n", a.labelsToString(issueLabels))
 
 	// Get the intersection of issueLabels and labelWatchSet, including labelMissing
-	log.Println("@List current labels")
+	logger.Infoln("@List current labels")
 	currentLabelsSet := make(map[string]struct{})
 	for _, label := range issueLabels {
 		if _, exist := a.config.labelWatchSet[label.GetName()]; !exist && label.GetName() != a.config.GetLabelMissing() {
@@ -369,20 +370,20 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 		}
 		currentLabelsSet[label.GetName()] = struct{}{}
 	}
-	log.Printf("Current labels: %v\n", a.labelsSetToString(currentLabelsSet))
+	logger.Infof("Current labels: %v\n", a.labelsSetToString(currentLabelsSet))
 
 	// Get expected labels
 	// Only handle labels already exist in repo
-	log.Println("@List expected labels")
+	logger.Infoln("@List expected labels")
 	expectedLabelsMap := make(map[string]bool)
 	for label, checked := range a.config.labels {
 		if _, exist := repoLabelsSet[label]; !exist {
-			log.Printf("Found label %v not exist int repo\n", label)
+			logger.Infof("Found label %v not exist int repo\n", label)
 			continue
 		}
 		expectedLabelsMap[label] = checked
 	}
-	log.Printf("Expected labels: %v\n", expectedLabelsMap)
+	logger.Infof("Expected labels: %v\n", expectedLabelsMap)
 
 	// Remove missing label
 	labelsToRemove := make(map[string]struct{})
@@ -394,7 +395,7 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 	}
 
 	if !a.config.GetEnableLabelMultiple() && checkedCount > 1 {
-		log.Println("Multiple labels detected")
+		logger.Infoln("Multiple labels detected")
 		_, _, err = a.client.Issues.CreateComment(a.globalContext,
 			a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(),
 			&github.IssueComment{
@@ -409,7 +410,7 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 		labelsToRemove[a.config.GetLabelMissing()] = struct{}{}
 	}
 
-	log.Printf("Labels to remove: %v\n", labelsToRemove)
+	logger.Infof("Labels to remove: %v\n", labelsToRemove)
 
 	for label := range labelsToRemove {
 		_, err := a.client.Issues.RemoveLabelForIssue(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(), label)
@@ -420,7 +421,7 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 
 	// Add missing label
 	if a.config.GetEnableLabelMissing() && checkedCount == 0 {
-		log.Println("@Add missing label")
+		logger.Infoln("@Add missing label")
 		_, _, err = a.client.Issues.AddLabelsToIssue(a.globalContext,
 			a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(),
 			[]string{a.config.GetLabelMissing()})
@@ -433,7 +434,7 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 			&github.IssueComment{
 				Body: func(v string) *string { return &v }(fmt.Sprintf("@%s %s", pr.User.GetLogin(), MessageLabelMissing))})
 		if err != nil {
-			log.Printf("Create issue comment: %v\n", err)
+			logger.Infof("Create issue comment: %v\n", err)
 		}
 
 		return fmt.Errorf("%s", MessageLabelMissing)
@@ -481,8 +482,8 @@ func (a *Action) OnPullRequestLabeledOrUnlabeled() error {
 	}
 
 	if len(changeList) > 0 {
-		log.Println("@Update PR body")
-		log.Printf("ChangeList: %v\n", changeList)
+		logger.Infoln("@Update PR body")
+		logger.Infof("ChangeList: %v\n", changeList)
 
 		_, _, err = a.client.PullRequests.Edit(a.globalContext, a.config.GetOwner(), a.config.GetRepo(), a.config.GetNumber(),
 			&github.PullRequest{Body: &body})
@@ -572,46 +573,46 @@ func (a *Action) labelsSetToString(labels map[string]struct{}) []string {
 }
 
 func main() {
-	log.Println("@Start docbot")
+	logger.Infoln("@Start docbot")
 
 	actionConfig, err := NewActionConfig()
 	if err != nil {
-		log.Fatalf("Get action config: %v\n", err)
+		logger.Fatalf("Get action config: %v\n", err)
 	}
 
 	action := NewAction(actionConfig)
 
 	githubContext, err := githubactions.Context()
 	if err != nil {
-		log.Fatalf("Get github context: %v\n", err)
+		logger.Fatalf("Get github context: %v\n", err)
 	}
 
 	if githubContextBytes, err := json.Marshal(githubContext); err == nil {
-		log.Printf("githubContext: %v\n", string(githubContextBytes))
+		logger.Infof("githubContext: %v\n", string(githubContextBytes))
 	}
 
 	switch githubContext.EventName {
 	case "issues":
-		log.Println("@EventName is issues")
+		logger.Infoln("@EventName is issues")
 	case "pull_request", "pull_request_target":
-		log.Println("@EventName is PR")
+		logger.Infoln("@EventName is PR")
 
 		actionType, ok := githubContext.Event["action"].(string)
 		if !ok {
-			log.Fatalln("Action type is not string")
+			logger.Fatalln("Action type is not string")
 		}
 
 		pr := githubContext.Event["pull_request"]
 		pullRequest, ok := pr.(map[string]interface{})
 		if !ok {
-			log.Fatalln("PR event is not map")
+			logger.Fatalln("PR event is not map")
 		}
 
 		number := int(githubContext.Event["number"].(float64))
 
 		prBody, ok := pullRequest["body"].(string)
 		if !ok {
-			log.Fatalln("PR body is not string")
+			logger.Fatalln("PR body is not string")
 		}
 
 		// Get expected labels
@@ -621,7 +622,7 @@ func main() {
 		actionConfig.labels = labels
 
 		if err := action.Run(actionType); err != nil {
-			log.Fatalln(err)
+			logger.Fatalln(err)
 		}
 	}
 }

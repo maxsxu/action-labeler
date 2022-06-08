@@ -1,4 +1,4 @@
-module github.com/apache/pulsar-test-infra/docbot
+module github.com/maxsxu/action-labeler
 
 go 1.18
 
