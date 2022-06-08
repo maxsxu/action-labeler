@@ -25,7 +25,8 @@ const (
 	White  = "\033[97m"
 
 	// background
-	BgRed = "\033[41m"
+	BgRed      = "\033[41m"
+	BgLightRed = "\033[101m"
 )
 
 func Infoln(v ...interface{}) {
@@ -48,10 +49,10 @@ func Fatalf(format string, v ...interface{}) {
 	s := fmt.Sprintf(format, v...)
 
 	if strings.Contains(s, "\n") {
-		s = strings.Replace(s, "\n", "\n"+BgRed, 1)
+		s = strings.Replace(s, "\n", "\n"+BgLightRed, 1)
 	}
 
-	log.New(os.Stderr, BgRed+FatalPrefix, log.LstdFlags|log.Llongfile).Output(2, fmt.Sprintln(s))
+	log.New(os.Stderr, BgLightRed+FatalPrefix, log.LstdFlags|log.Llongfile).Output(2, fmt.Sprintln(s))
 	os.Exit(1)
 }
 
@@ -59,9 +60,9 @@ func Fatalln(v ...interface{}) {
 	s := fmt.Sprint(v...)
 
 	if strings.Contains(s, "\n") {
-		s = strings.Replace(s, "\n", "\n"+BgRed, 1)
+		s = strings.Replace(s, "\n", "\n"+BgLightRed, 1)
 	}
 
-	log.New(os.Stderr, BgRed+FatalPrefix, log.LstdFlags|log.Llongfile).Output(2, fmt.Sprintln(s))
+	log.New(os.Stderr, BgLightRed+FatalPrefix, log.LstdFlags|log.Llongfile).Output(2, fmt.Sprintln(s))
 	os.Exit(1)
 }
