@@ -22,6 +22,9 @@ const (
 	Cyan   = "\033[36m"
 	Gray   = "\033[37m"
 	White  = "\033[97m"
+
+	// background
+	BgRed = "\033[41m"
 )
 
 func Infoln(v ...interface{}) {
@@ -41,11 +44,11 @@ func Errorf(format string, v ...interface{}) {
 }
 
 func Fatalf(format string, v ...interface{}) {
-	log.New(os.Stderr, Red+FatalPrefix+Reset, log.LstdFlags|log.Llongfile).Output(2, fmt.Sprintf(format, v...))
+	log.New(os.Stderr, Red+FatalPrefix, log.LstdFlags|log.Llongfile).Output(2, fmt.Sprintf(format, v...)+Reset)
 	os.Exit(1)
 }
 
 func Fatalln(v ...interface{}) {
-	log.New(os.Stderr, Red+FatalPrefix+Reset, log.LstdFlags|log.Llongfile).Output(2, fmt.Sprintln(v...))
+	log.New(os.Stderr, BgRed+FatalPrefix, log.LstdFlags|log.Llongfile).Output(2, fmt.Sprintln(v...)+Reset)
 	os.Exit(1)
 }
