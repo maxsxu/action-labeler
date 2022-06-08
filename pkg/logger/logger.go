@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 )
 
 const (
@@ -44,11 +45,23 @@ func Errorf(format string, v ...interface{}) {
 }
 
 func Fatalf(format string, v ...interface{}) {
-	log.New(os.Stderr, Red+FatalPrefix, log.LstdFlags|log.Llongfile).Output(2, fmt.Sprintf(format, v...)+Reset)
+	s := fmt.Sprintf(format, v...)
+
+	if strings.Contains(s, "\n") {
+		s = strings.Replace(s, "\n", "\n"+BgRed, 1)
+	}
+
+	log.New(os.Stderr, BgRed+FatalPrefix, log.LstdFlags|log.Llongfile).Output(2, fmt.Sprintln(s))
 	os.Exit(1)
 }
 
 func Fatalln(v ...interface{}) {
-	log.New(os.Stderr, BgRed+FatalPrefix, log.LstdFlags|log.Llongfile).Output(2, fmt.Sprintln(v...)+Reset)
+	s := fmt.Sprint(v...)
+
+	if strings.Contains(s, "\n") {
+		s = strings.Replace(s, "\n", "\n"+BgRed, 1)
+	}
+
+	log.New(os.Stderr, BgRed+FatalPrefix, log.LstdFlags|log.Llongfile).Output(2, fmt.Sprintln(s))
 	os.Exit(1)
 }
