@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/maxsxu/action-labeler/compare/v1.1.0...v1.1.1) (2023-02-23)
+
+
+### Miscellaneous Chores
+
+* release 1.1.1 ([316d443](https://github.com/maxsxu/action-labeler/commit/316d4436fcb52cbe9acef3de5e25734ee341fccc))
+
 ## [1.1.0](https://github.com/maxsxu/action-labeler/compare/v1.0.0...v1.1.0) (2023-02-23)
 
 
